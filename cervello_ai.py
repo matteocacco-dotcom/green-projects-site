@@ -2,53 +2,51 @@ import os
 import json
 from langchain_groq import ChatGroq
 from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain.agents import initialize_agent, AgentType
+from langchain.agents import create_tool_calling_agent, AgentExecutor
+from langchain_core.prompts import ChatPromptTemplate
 from supabase import create_client, Client
 
-# Legge le credenziali dalle variabili d'ambiente (impostate da GitHub Actions)
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Configura L'LLM Gratis (Llama 3 su Groq) e lo strumento di ricerca online
 llm = ChatGroq(model="llama3-70b-8192", temperature=0.2)
-search_tool = TavilySearchResults(max_results=5)
+tools = [TavilySearchResults(max_results=5)]
 
-# Inizializza l'agente
-agent = initialize_agent(
-    tools=[search_tool],
-    llm=llm,
-    agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
-    verbose=True
-)
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant that searches the web for information."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
 
-# Comando per l'AI
-prompt = """
-Cerca sul web un progetto innovativo, una startup ecologica o un'iniziativa recente (dell'ultimo anno) legata alla salvaguardia dell'ambiente o alla green tech.
-Trova i dettagli e restituisci la risposta TASSATIVAMENTE in formato JSON con questa struttura:
+agent = create_tool_calling_agent(llm, tools, prompt)
+agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+
+user_prompt = """
+Search the web for an innovative project, eco startup, or recent initiative (from the last year) related to environmental protection or green tech.
+Find the details and return the response STRICTLY in JSON format with this structure:
 {
-    "titolo": "Nome del progetto",
-    "categoria": "es. Riforestazione, Energia Rinnovabile, Riciclo, Tutela Animali",
-    "descrizione": "Un riassunto chiaro di cosa fa il progetto e perché è importante (massimo 4 righe).",
-    "link": "L'URL del sito ufficiale o della notizia del progetto"
+    "titolo": "Project name",
+    "categoria": "e.g. Reforestation, Renewable Energy, Recycling, Wildlife Protection",
+    "descrizione": "A clear summary of what the project does and why it matters (maximum 4 lines).",
+    "link": "The URL of the official website or news article about the project"
 }
-Restituisci esclusivamente il codice JSON valido. Non aggiungere saluti o spiegazioni in testo semplice.
+Return exclusively valid JSON code. Do not add greetings or plain text explanations.
 """
 
-print("L'AI Gratis sta cercando un progetto green sul web...")
+print("AI is searching for a green project on the web...")
 try:
-    risposta_agente = agent.run(prompt)
-    
-    # Pulizia dell'output nel caso il modello aggiunga del testo inutile prima del JSON
-    if "```json" in risposta_agente:
-        risposta_agente = risposta_agente.split("```json")[1].split("```")[0].strip()
-    elif "```" in risposta_agente:
-        risposta_agente = risposta_agente.split("```")[1].split("```")[0].strip()
+    result = agent_executor.invoke({"input": user_prompt})
+    risposta = result["output"]
 
-    # Carica i dati su Supabase
-    dati_progetto = json.loads(risposta_agente)
+    if "```json" in risposta:
+        risposta = risposta.split("```json")[1].split("```")[0].strip()
+    elif "```" in risposta:
+        risposta = risposta.split("```")[1].split("```")[0].strip()
+
+    dati_progetto = json.loads(risposta)
     supabase.table("notizie").insert(dati_progetto).execute()
-    print("Database aggiornato con successo a costo zero!")
-    
+    print("Database updated successfully!")
+
 except Exception as e:
-    print(f"Errore durante il processo: {e}")
+    print(f"Error during process: {e}")
