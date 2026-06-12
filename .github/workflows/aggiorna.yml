@@ -19,6 +19,7 @@ jobs:
 
     - name: Installa i pacchetti necessari
       run: pip install supabase langchain-core langchain-community langchain-groq
+      run: pip install supabase langchain langchain-core langchain-community langchain-groq
 
     - name: Esegui lo script AI
       env:
